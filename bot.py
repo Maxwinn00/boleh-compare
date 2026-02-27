@@ -1,6 +1,8 @@
 import os
 import io
 import requests
+import threading # NEW
+from http.server import BaseHTTPRequestHandler, HTTPServer # NEW
 from PIL import Image
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
@@ -103,12 +105,29 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"⚠️ Oops, something went wrong: {e}")
 
 # ==========================================
+# 4.5 THE "DUMMY SERVER" HACK FOR RENDER
+# ==========================================
+class DummyHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is awake and listening!")
+
+def keep_alive():
+    # Render assigns a PORT dynamically, or we default to 8080
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), DummyHandler)
+    server.serve_forever()
+
+# ==========================================
 # 5. START THE BOT
 # ==========================================
 if __name__ == '__main__':
     print("Starting BolehCompare Bot (Multi-Item Vision Enabled)...")
     
-    # --- THE FIX: We increase the timeouts to give Gemini time to "look" at photos ---
+    # NEW: Start the dummy server in the background
+    threading.Thread(target=keep_alive, daemon=True).start()
+    
     app = (
         Application.builder()
         .token(TELEGRAM_TOKEN)
