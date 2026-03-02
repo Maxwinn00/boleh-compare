@@ -1,17 +1,17 @@
 import streamlit as st
 import pandas as pd
-import requests # We use this built-in tool instead of the supabase library!
+import requests
 
 # 1. Page Configuration
-st.set_page_config(page_title="BolehCompare", page_icon="🇲🇾")
-st.title("🇲🇾 BolehCompare: Grocery Price Tracker")
-st.write("Find the cheapest groceries tracked by the community.")
+st.set_page_config(page_title="BolehCompare", page_icon="🇲🇾", layout="wide")
+st.title("🇲🇾 BolehCompare")
+st.markdown("### *Smart Grocery Price Tracking for Malaysians*")
 
-# 2. Database Connection (Using Streamlit Secrets Vault)
+# 2. Database Connection (Secrets)
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 
-# 3. Fetch Data from Supabase directly via its API
+@st.cache_data(ttl=600) # Cache data for 10 mins to keep it fast
 def load_data():
     headers = {
         "apikey": SUPABASE_KEY,
@@ -19,42 +19,53 @@ def load_data():
         "Content-Type": "application/json"
     }
     url = f"{SUPABASE_URL}/rest/v1/grocery_prices?select=*"
-    
     response = requests.get(url, headers=headers)
-    
     if response.status_code == 200 and response.json():
         df = pd.DataFrame(response.json())
-        
-        # --- THE FIX ---
-        # Convert the timestamp string into a clean Date format
         df['created_at'] = pd.to_datetime(df['created_at']).dt.strftime('%Y-%m-%d')
-        
         return df
-    else:
-        return pd.DataFrame() # Return empty dataframe if no data
+    return pd.DataFrame()
 
 df = load_data()
 
-# 4. The Search Interface
-search_query = st.text_input("🔍 What are you looking for?", placeholder="e.g., Milo, Maggi, Milk")
+# 3. Search Header
+search_query = st.text_input("🔍 What are you looking for today?", placeholder="e.g., Milo, Maggi, Eggs")
 
 if not df.empty:
     if search_query:
-        # Filter the dataframe (case-insensitive)
+        # Filtering logic
         filtered_df = df[df["item_name"].str.contains(search_query, case=False, na=False)]
         
         if not filtered_df.empty:
-            filtered_df = filtered_df.sort_values(by="price", ascending=True)
-            st.success(f"Found {len(filtered_df)} deals for '{search_query}'!")
+            # --- NEW: VISUAL METRICS ---
+            best_deal = filtered_df.loc[filtered_df['price'].idxmin()]
             
-            # Select specific columns to show to the user cleanly
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Lowest Price", f"RM {best_deal['price']:.2f}")
+            with col2:
+                st.metric("Best Retailer", best_deal['retailer'])
+            with col3:
+                st.metric("Total Deals Found", len(filtered_df))
+
+            st.divider()
+
+            # --- NEW: INTERACTIVE CHART ---
+            st.subheader(f"Price Comparison: {search_query}")
+            # Prepare data for chart: Group by retailer and get the lowest price there
+            chart_data = filtered_df.groupby('retailer')['price'].min().sort_values()
+            st.bar_chart(chart_data)
+
+            # --- TABLE VIEW ---
+            st.subheader("All Deals")
             display_df = filtered_df[['item_name', 'price', 'remarks', 'retailer', 'location', 'created_at']]
-            st.dataframe(display_df, use_container_width=True, hide_index=True)
+            st.dataframe(display_df.sort_values(by="price"), use_container_width=True, hide_index=True)
+            
         else:
-            st.warning("No deals found! Time to snap some photos.")
+            st.warning(f"No deals found for '{search_query}'. Try another item!")
     else:
-        st.subheader("Latest Deals")
-        display_df = df[['item_name', 'price', 'remarks', 'retailer', 'location', 'created_at']]
-        st.dataframe(display_df.sort_values(by="created_at", ascending=False), use_container_width=True, hide_index=True)
+        st.info("👋 Welcome! Type a product name above to see the magic.")
+        st.subheader("Recent Community Submissions")
+        st.table(df.sort_values(by="created_at", ascending=False).head(5)[['item_name', 'price', 'retailer']])
 else:
-    st.info("The database is currently empty. Start submitting deals via the bot!")
+    st.error("Could not connect to database. Check your Supabase keys!")
