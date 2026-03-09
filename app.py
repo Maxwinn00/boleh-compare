@@ -28,44 +28,64 @@ def load_data():
 
 df = load_data()
 
+# Fill older database entries that have no category with "Miscellaneous"
+if not df.empty and 'category' in df.columns:
+    df['category'] = df['category'].fillna('Miscellaneous')
+elif not df.empty:
+    df['category'] = 'Miscellaneous'
+
 # 3. Search Header
 search_query = st.text_input("🔍 What are you looking for today?", placeholder="e.g., Milo, Maggi, Eggs")
 
 if not df.empty:
-    if search_query:
-        # Filtering logic
-        filtered_df = df[df["item_name"].str.contains(search_query, case=False, na=False)]
-        
-        if not filtered_df.empty:
-            # --- NEW: VISUAL METRICS ---
-            best_deal = filtered_df.loc[filtered_df['price'].idxmin()]
-            
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Lowest Price", f"RM {best_deal['price']:.2f}")
-            with col2:
-                st.metric("Best Retailer", best_deal['retailer'])
-            with col3:
-                st.metric("Total Deals Found", len(filtered_df))
+    # Define the Aisle Tabs
+    categories = [
+        "All Deals", "Fresh Produce", "Dairy & Chilled", "Pantry Staples", 
+        "Snacks & Confectionery", "Beverages", "Baby & Toddler", 
+        "Personal Care", "Household & Cleaning", "Frozen Foods", "Miscellaneous"
+    ]
 
-            st.divider()
+    tabs = st.tabs(categories)
 
-            # --- NEW: INTERACTIVE CHART ---
-            st.subheader(f"Price Comparison: {search_query}")
-            # Prepare data for chart: Group by retailer and get the lowest price there
-            chart_data = filtered_df.groupby('retailer')['price'].min().sort_values()
-            st.bar_chart(chart_data)
+    for i, tab in enumerate(tabs):
+        with tab:
+            current_category = categories[i]
 
-            # --- TABLE VIEW ---
-            st.subheader("All Deals")
-            display_df = filtered_df[['item_name', 'price', 'remarks', 'retailer', 'location', 'created_at']]
-            st.dataframe(display_df.sort_values(by="price"), use_container_width=True, hide_index=True)
-            
-        else:
-            st.warning(f"No deals found for '{search_query}'. Try another item!")
-    else:
-        st.info("👋 Welcome! Type a product name above to see the magic.")
-        st.subheader("Recent Community Submissions")
-        st.table(df.sort_values(by="created_at", ascending=False).head(5)[['item_name', 'price', 'retailer']])
+            # Step 1: Filter by Search Query (if any)
+            if search_query:
+                tab_df = df[df["item_name"].str.contains(search_query, case=False, na=False)]
+            else:
+                tab_df = df
+
+            # Step 2: Filter by Category Tab (unless we are on "All Deals")
+            if current_category != "All Deals":
+                tab_df = tab_df[tab_df["category"] == current_category]
+
+            # Step 3: Display the Data
+            if not tab_df.empty:
+                if search_query and current_category == "All Deals":
+                    # Show the visual metrics and chart only on the "All Deals" tab when searching
+                    best_deal = tab_df.loc[tab_df['price'].idxmin()]
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Lowest Price", f"RM {best_deal['price']:.2f}")
+                    with col2:
+                        st.metric("Best Retailer", best_deal['retailer'])
+                    with col3:
+                        st.metric("Total Deals Found", len(tab_df))
+
+                    st.divider()
+
+                    chart_data = tab_df.groupby('retailer')['price'].min().sort_values()
+                    if len(chart_data) > 1:
+                        st.bar_chart(chart_data)
+
+                st.dataframe(
+                    tab_df[['item_name', 'price', 'category', 'retailer', 'location', 'remarks', 'created_at']].sort_values(by="price"), 
+                    use_container_width=True, 
+                    hide_index=True
+                )
+            else:
+                st.info(f"No items found in {current_category}.")
 else:
     st.error("Could not connect to database. Check your Supabase keys!")

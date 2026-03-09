@@ -1,8 +1,9 @@
 import os
 import io
 import requests
-import threading # NEW
-from http.server import BaseHTTPRequestHandler, HTTPServer # NEW
+import threading 
+from enum import Enum
+from http.server import BaseHTTPRequestHandler, HTTPServer 
 from PIL import Image
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
@@ -22,15 +23,29 @@ SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 # ==========================================
 client = genai.Client(api_key=GEMINI_API_KEY)
 
+# NEW: Define the 10 fixed categories
+class CategoryEnum(str, Enum):
+    PRODUCE = "Fresh Produce"
+    DAIRY = "Dairy & Chilled"
+    PANTRY = "Pantry Staples"
+    SNACKS = "Snacks & Confectionery"
+    BEVERAGES = "Beverages"
+    BABY = "Baby & Toddler"
+    PERSONAL_CARE = "Personal Care"
+    HOUSEHOLD = "Household & Cleaning"
+    FROZEN = "Frozen Foods"
+    MISC = "Miscellaneous"
+
 class GroceryDeal(BaseModel):
     item_name: str
     price: float
     retailer: str
     location: str
-    remarks: str  # NEW: Captures B1F1, expiry dates, or special conditions
+    remarks: str  
+    category: CategoryEnum  # NEW: Instructs Gemini to categorize the item
 
 def extract_grocery_data(ai_inputs):
-    # UPGRADED PROMPT: We explicitly tell it to look for multiple items
+    # UPGRADED PROMPT: Added categorization instruction
     prompt = """
     You are a data extraction bot for a Malaysian grocery app. 
     Extract ALL the grocery deals you can find in the provided image or text.
@@ -38,6 +53,7 @@ def extract_grocery_data(ai_inputs):
     - If location isn't specified, output 'Unknown'. 
     - If there is no price, output 0.0.
     - Use the 'remarks' field for promos like 'Buy 1 Free 1', 'Valid till Friday', or 'Must buy 2'. If none, output 'None'.
+    - Categorize each item strictly into one of the provided categories.
     """
     
     final_contents = [prompt] + ai_inputs
@@ -47,7 +63,6 @@ def extract_grocery_data(ai_inputs):
         contents=final_contents,
         config={
             'response_mime_type': 'application/json',
-            # NEW: We tell Gemini to return a LIST of deals, not just one!
             'response_schema': list[GroceryDeal], 
         }
     )
@@ -65,7 +80,8 @@ def save_to_supabase(deals_json_list):
     }
     url = f"{SUPABASE_URL}/rest/v1/grocery_prices"
     
-    # Because deals_json_list is a JSON array, Supabase automatically does a bulk insert!
+    # Because Gemini's JSON keys now match your DB columns perfectly (including 'category'),
+    # we can push the raw JSON list directly to Supabase.
     response = requests.post(url, headers=headers, data=deals_json_list)
     return response.status_code in [200, 201]
 
@@ -73,10 +89,10 @@ def save_to_supabase(deals_json_list):
 # 4. TELEGRAM MESSAGE HANDLER
 # ==========================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🇲🇾 BolehCompare Bot is awake! Send me a flyer, and I'll extract ALL the deals.")
+    await update.message.reply_text("🇲🇾 BolehCompare Bot is awake! Send me a flyer, and I'll extract and categorize ALL the deals.")
 
 async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("👀 Scanning for deals...")
+    await update.message.reply_text("👀 Scanning for deals and categorizing...")
     
     try:
         ai_inputs = []
@@ -97,7 +113,7 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         success = save_to_supabase(clean_json_list)
         
         if success:
-            await update.message.reply_text(f"✅ Extracted and saved!\n{clean_json_list}")
+            await update.message.reply_text(f"✅ Extracted, categorized, and saved!\n{clean_json_list}")
         else:
             await update.message.reply_text("❌ Failed to save to database.")
             
@@ -123,9 +139,9 @@ def keep_alive():
 # 5. START THE BOT
 # ==========================================
 if __name__ == '__main__':
-    print("Starting BolehCompare Bot (Multi-Item Vision Enabled)...")
+    print("Starting BolehCompare Bot (Multi-Item Vision & Categorization Enabled)...")
     
-    # NEW: Start the dummy server in the background
+    # Start the dummy server in the background
     threading.Thread(target=keep_alive, daemon=True).start()
     
     app = (
